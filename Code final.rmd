@@ -1,0 +1,1557 @@
+---
+title: "PROJET"
+author: "Edmée Hogenmuller"
+date: "2022-10-31"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Inititalisation Librairie à télécharger
+
+```{r}
+install.packages("tidyverse",type="binary")
+install.packages("car")
+
+install.packages("dplyr")
+install.packages("mice")
+install.packages("openxlsx", dependencies = TRUE)
+install.packages("questionr")
+install.packages("readxl") 
+install.packages("haven")
+install.packages("questionr")
+install.packages("Hmisc")
+install.packages("randomForest")
+
+install.packages(c("FactoMineR", "factoextra"))
+install.packages("hrbrthemes")
+
+install.packages("shiny")
+install.packages("shinydashboard")
+install.packages("DT")
+
+```
+
+Librairie à charger
+
+```{r}
+library('randomForest')
+library(car)
+library(tidyverse)
+library("magrittr")
+library(dplyr)
+library(tidyr)
+library(mice)
+library(ggplot2)
+library(openxlsx)
+library(questionr)
+library(questionr) 
+library(MASS)
+library(Hmisc)
+library("FactoMineR")
+library("factoextra")
+
+library(shiny)
+library(shinydashboard)
+
+library(DT)
+```
+
+
+
+```{r}
+#Changement rÈpertoire travail - Edmée
+getwd()
+setwd("C:/Users/edmee/OneDrive - De Vinci/A4/R/Projet")
+# importation bases de donnees - Edmée 
+#sev <- read.table(file.choose(),header=TRUE)
+#prem <- read.csv(file.choose(new=TRUE),sep=";")
+sev <- read.table("C:/Users/edmee/OneDrive - De Vinci/A4/R/Projet/db_sev.txt",header=TRUE)
+prem <- read.csv("C:/Users/edmee/OneDrive - De Vinci/A4/R/Projet/db_prem.csv",sep=";")
+freq <- read.table("C:/Users/edmee/OneDrive - De Vinci/A4/R/Projet/db_freq.prn", header=TRUE)
+```
+# Analyse des bdd
+
+Analyse des bdd/
+
+```{r}
+  analyse_base = function(base){
+    cat("\n \n")
+    print("------------------------------------   DIMENSIONS : ")
+    print("Dimensions : ") 
+    print(dim(base)) # dimensions
+    print("nbr de lignes : ")
+    print(nrow(base)) # nb de lignes
+    print("nbr de colonnes : ")
+    print(ncol(base)) # nb de colonnes
+    
+    cat("\n \n")
+    print("------------------------------------   VARIABLES : ")
+    print(t(t(sapply(base,class)))) # nom des variables
+    
+    cat("\n \n")
+    print("------------------------------------   STATS DES : ")
+    summary(base) # stats descriptives
+  }
+  
+  print("********************   ANALYSE DE BASE_prem   ****************** ")
+  analyse_base(prem)
+  print("********************   ANALYSE DE BASE_sev   ****************** ")
+  analyse_base(sev)
+  print("********************   ANALYSE DE BASE_freq   ****************** ")
+  analyse_base(freq)
+```
+
+Etude des valeurs manquantes:
+
+```{r}
+
+#Etude na et valleur manquante
+sum(is.na(freq)) 
+sum(is.na(sev))
+#pas de valeur manquante pour les 2 premiere db
+sum(is.na(prem))
+#Beaucoup de valeur manquante pour la 3e
+
+###1. Visualisation des données manquantes:
+#on remplace les blanc par des na
+prem[prem==""]<-NA
+#On extrait les valeur manquante pour les mettre dans un data frame
+missing_by_column <- prem %>% 
+  is.na  %>% # check if each cell is na
+  as_tibble %>% # convert to data-frame
+  mutate(row_number = 1:nrow(.)) %>% # add a column with the row number
+  gather(variable, is_missing, -row_number) # turn wide data into narrow data
+
+head(missing_by_column)
+#on les repr?sente pour avoir un apercu. 
+ggplot(missing_by_column, aes(x = variable, y = row_number, fill = is_missing)) +
+  geom_tile() + 
+  theme_minimal() +
+  scale_fill_grey(name = "",
+                  labels = c("Present","Missing")) +
+  theme(axis.text.x  = element_text(angle=45, vjust=0.5, size = 8)) + 
+  labs(x = "Variables in Dataset",
+       y = "Rows / observations")
+
+describe(prem) #Permet de savoir le nb de missing value par variable. 
+
+sum(is.na(prem))
+#On supprime la colonne channel
+prem <- subset (prem, select = -Channel)
+#on va utiliser la m?thode mice, qui devine les valeurs manquante, pour les donn?es num
+empty_model <- mice(prem, maxit=0) 
+method <- empty_model$method
+predictorMatrix <- empty_model$predictorMatrix
+
+imputed_data <- mice(prem, method, predictorMatrix, m=5)
+imputed_data <- complete(imputed_data)
+head(imputed_data)
+sum(is.na(imputed_data))
+
+prem<-imputed_data
+
+#on a un peu moins de donn?e manquante.
+prem$VehGas[prem$VehGas=="Gazole"]<-"Diesel"
+t<-freq(prem$VehGas)
+
+###VehGas
+#On va prendre le gas majoritaire du type de voiture pour remplacer les valeur manquante.
+#On visualise les gas en fonction de la classe de voiture.
+
+ggplot(prem, aes(0, fill = factor(VehGas))) + 
+  geom_bar(position = "fill") +
+  scale_y_continuous(NULL) + 
+  xlab("VehClass")  + ylab("") + labs(fill = "VehGas")+
+  coord_polar(theta = "y")+
+  facet_wrap(~ factor(VehClass))
+#On recherche les max de chaqu groupe
+prem %>% count(VehClass,VehGas) %>% spread(VehClass, n, fill = 0)
+sum(is.na(prem$VehGas))
+#il y a 163 valeurs manquantes
+
+for (i in c(1:52372))
+{
+  if (is.na(prem$VehGas[i])&& (prem$VehClass[i]=="Cheapest"|prem$VehClass[i]=="Most expensive"|prem$VehClass[i]=="Cheaper"|prem$VehClass[i]=="Medium"))
+  {
+    prem$VehGas[i]<-"Regular"
+  }
+  if (is.na(prem$VehGas[i]) && (prem$VehClass[i]=="Cheap" |prem$VehClass[i]=="More expensive"|prem$VehClass[i]=="Expensive"|prem$VehClass[i]=="Medium high"|prem$VehClass[i]=="Medium low"))
+  {
+    prem$VehGas[i]<-"Diesel"
+  }
+}
+
+sum(is.na(prem$VehGas))
+
+
+ggplot(prem, aes(0, fill = factor(VehGas))) + 
+  geom_bar(position = "fill") +
+  scale_y_continuous(NULL) + 
+  xlab("VehClass")  + ylab("") + labs(fill = "VehGas")+
+  coord_polar(theta = "y")+
+  facet_wrap(~ factor(VehClass))
+
+##VehPow
+prem$VehPower
+ggplot(prem, aes(0, fill = factor(VehPower))) + 
+  geom_bar(position = "fill") +
+  scale_y_continuous(NULL) + 
+  xlab("VehClass")  + ylab("") + labs(fill = "VehPower")+
+  coord_polar(theta = "y")+
+  facet_wrap(~ factor(VehClass))
+#On recherche les max de chaqu groupe
+prem %>% count(VehClass,VehPower) %>% spread(VehClass, n, fill = 0)
+sum(is.na(prem$VehPower))
+#il y a 163 valeurs manquantes
+for (i in c(1:52372))
+{
+  if (is.na(prem$VehPower[i])&& (prem$VehClass[i]=="Most expensive"|prem$VehClass[i]=="More expensive"|prem$VehClass[i]=="Expensive"))
+  {
+    prem$VehPower[i]<-"p16"
+  }
+  if (is.na(prem$VehPower[i]) && (prem$VehClass[i]=="Cheap" | prem$VehClass[i]=="Medium low"))
+  {
+    prem$VehPower[i]<-"p13"
+  }
+  if (is.na(prem$VehPower[i]) && prem$VehClass[i]=="Cheaper")
+  {
+    prem$VehPower[i]<-"p11"
+  }
+  if (is.na(prem$VehPower[i]) && prem$VehClass[i]=="Cheapest")
+  {
+        prem$VehPower[i]<-"p10"
+  }
+  if (is.na(prem$VehPower[i]) && prem$VehClass[i]=="Medium high")
+  {
+    prem$VehPower[i]<-"p15"
+  }
+  if (is.na(prem$VehPower[i]) && prem$VehClass[i]=="Medium")
+  {
+    prem$VehPower[i]<-"p14"
+  }
+}
+
+sum(is.na(prem$VehPower))
+
+
+ggplot(prem, aes(0, fill = factor(VehPower))) + 
+  geom_bar(position = "fill") +
+  scale_y_continuous(NULL) + 
+  xlab("VehClass")  + ylab("") + labs(fill = "VehGas")+
+  coord_polar(theta = "y")+
+  facet_wrap(~ factor(VehClass))
+
+##Vehicule usage
+sum(is.na(prem$VehUsage))
+freq(prem$VehUsage) 
+ggplot(prem, aes(x = VehUsage,fill=VehUsage)) +
+  geom_bar()
+#On a une grosse majorit? de Private+trip to office, donc on remplace les valeurs manquantes par ?a
+prem$VehUsage[is.na(prem$VehUsage)]<-"Private+trip to office"
+sum(is.na(prem$VehUsage))
+
+sum(is.na(prem))
+
+
+
+```
+
+Etude de outliers et simplification:
+
+```{r}
+#DrivAge:
+max(prem$DrivAge)
+min(prem$DrivAge)
+#On estime qu'un conducteur peut avoir entre 18 et 99ans. Dans le cas contraire, on remplace la valeur par la m?diane
+m<-median(prem$DrivAge)
+prem$DrivAge[prem$DrivAge<18]<-m
+prem$DrivAge[prem$DrivAge>99]<-m
+
+#DrivGender
+freq(prem$DrivGender)
+#On ? plusieur type pour meme chose
+prem$DrivGender[prem$DrivGender=="F"]<-"Female"
+prem$DrivGender[prem$DrivGender=="H"]<-"Male"
+prem$DrivGender[prem$DrivGender=="M"]<-"Male"
+
+#on va regrouper les voiture en 3 catégorie poyur simplifier
+prem$VehClass[prem$VehClass=="Cheapest"|prem$VehClass=="Cheap"|prem$VehClass=="Cheaper"]<-"Cheap"
+prem$VehClass[prem$VehClass=="Medium low" |prem$VehClass=="Medium high"|prem$VehClass=="Medium"]<-"Medium"
+prem$VehClass[prem$VehClass=="Most expensive" |prem$VehClass=="More expensive"|prem$VehClass=="Expensive"]<-"Expensive"
+
+
+```
+
+
+Base sev
+
+```{r}
+#Pour la base sev
+sum(is.na(sev))
+sev[sev=="?"]<-NA
+sev[sev=="Waiting"]<-NA
+sum(is.na(sev))
+sev <- na.omit(sev)
+sum(is.na(sev))
+
+#sev %>% drop_na()
+
+sev$Payment<-as.numeric(sev$Payment)
+class(sev$Payment)
+
+summary(sev$Payment)
+
+nrow(sev[sev$Payment<0,])
+sev[sev$Payment<0,]<-0
+
+unique(sev$Year)
+
+max(sev$Payment)
+sev=sev[sev$Payment!=max(sev$Payment),]
+max(sev$Payment)
+
+```
+
+Bon format:
+
+```{r}
+#Occur
+sev$OccurDate <- as.Date(sev$OccurDate,origin = "1900-01-01") #BON FORMAT DE LA DATE
+sev$Year <- format(as.Date(sev$OccurDate), "%Y")
+sev$Year <- as.numeric(sev$Year)
+#Payment
+sev$Payment<-as.numeric(sev$Payment)
+#PremTot
+prem$PremTot <- as.integer(gsub(",", ".", prem$PremTot))
+
+prem$PremTPLM <- as.integer(gsub(",", ".", prem$PremTPLM))
+prem$VehPower <- gsub("p", "", prem$VehPower)
+prem$VehPower <- as.integer(gsub("P", "", prem$VehPower))
+
+prem$Area <- as.integer(gsub("A", "", prem$Area))
+```
+
+
+Etude des doublons
+
+```{r}
+sum(duplicated(prem))
+sum(duplicated(freq))
+sum(duplicated(sev))
+prem<-unique(prem)
+#on a 113 dupliqué dans prem. on les supprime
+sum(duplicated(prem))
+
+table2003<-prem[prem$Year==2003,]
+
+sum(duplicated(table2003$IDpol))
+table2003 <- table2003 %>% group_by(IDpol) %>% filter (! duplicated(IDpol))
+sum(duplicated(table2003$IDpol))
+
+table2004<-prem[prem$Year==2004,]
+sum(duplicated(table2004$IDpol))
+table2004 <- table2004 %>% group_by(IDpol) %>% filter (! duplicated(IDpol))
+sum(duplicated(table2004$IDpol))
+
+prem<-rbind(table2003,table2004)
+#il y a des doublons d'IDpol pour chaque années dans prem
+
+table2003<-freq[freq$Year==2003,]
+sum(duplicated(table2003$IDpol))
+table2004<-freq[freq$Year==2004,]
+sum(duplicated(table2004$IDpol))
+#Il n'y en a pas dans freq
+
+table2003<-sev[sev$Year==2003,]
+sum(duplicated(table2003$IDpol))
+table2004<-sev[sev$Year==2004,]
+sum(duplicated(table2004$IDpol))
+# Il y en a pas mal dans sev mais normal, prend chaque sinistre
+
+```
+
+On vérifie une derniere fois qu'il n'ya pas de valeur étrange dans chaque colonne
+
+```{r}
+
+i=0
+for (i in colnames(prem))
+#for (i in range(2, ncol(prem)))
+{
+  print(i)
+  if (i!="IDpol")
+  {
+    print(i)
+    print(unique(prem[,i]))
+  }
+}
+
+for (i in colnames(sev))
+#for (i in range(2, ncol(prem)))
+{
+  if (i!="IDpol")
+  {
+    print(i)
+    print(unique(sev[,i]))
+  }
+}
+for (i in colnames(freq))
+{
+  if (i!="IDpol")
+  {
+    print(i)
+    print(unique(freq[,i]))
+  }
+}
+```
+
+
+On compte le nombre de sinistre par personne
+
+```{r}
+g2=aggregate(sev$IDpol, by=list(sev$IDpol,sev$Year), FUN=length)
+names(g2)[1] <- "IDpol"
+names(g2)[2] <- "Year"
+names(g2)[3] <- "Nbsinistre"
+
+g=aggregate(sev$Payment, by=list(sev$IDpol,sev$Year), FUN=sum)
+names(g)[1] <- "IDpol"
+names(g)[2] <- "Year"
+names(g)[3] <- "Sum_sin"
+g3=aggregate(sev$Payment, by=list(sev$IDpol,sev$Year), FUN=mean)
+names(g3)[1] <- "IDpol"
+names(g3)[2] <- "Year"
+names(g3)[3] <- "Mean_sin"
+```
+
+## Jointure des tables
+
+```{r}
+sev=sev[sev$Payment>0,]
+#Merging 
+names(prem)
+names(prem)[1] <- "IDpol"
+names(prem)
+table=prem
+#table<-left_join(table,freq,by=c("IDpol","Year"))
+
+
+table<-left_join(table,g2,by=c("IDpol","Year"))
+table$Nbsinistre[is.na(table$Nbsinistre)]<-0
+
+table<-left_join(table,g,by=c("IDpol","Year"))
+table$Sum_sin[is.na(table$Sum_sin)]<-0
+table<-left_join(table,g3,by=c("IDpol","Year"))
+table$Mean_sin[is.na(table$Mean_sin)]<-0
+
+#Création d'une table 2003 et une 2004
+table_2003<-table[table$Year==2003,]
+table_2004<-table[table$Year==2004,]
+
+var_quantitative<-select_if(table, is.numeric)
+
+
+```
+
+#Rshiny
+```{r}
+prem2=subset (prem, select = -c(Marketing,VehUsage,Garage,Area,LicenceNb))
+sin=subset (sev, select = -c(Year))
+
+saveData<-function(data)
+{
+  sin<<-as.data.frame(data)
+}
+saveData2<-function(data)
+{
+  prem2<<-as.data.frame(data)
+}
+
+
+shinyApp(
+  ui <- dashboardPage(
+  dashboardHeader(title = "Base de donnée assurés"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Résumé de l'année", tabName = "page9", icon = icon("dollar")),
+      menuItem("Tableau des assurés", tabName = "page1", icon = icon("table")),
+      menuItem("Tableau des sinistres", tabName = "page2", icon = icon("table")),
+      menuItem("Ajouter un assuré", tabName ="page3" , icon = icon("plus")),
+      menuItem("Ajouter un sinistre", tabName = "page4", icon = icon("plus")),
+      
+      menuItem("Etude univarié", tabName = "page5", icon = icon("poll")),
+      menuItem("Etude bivarié", tabName = "page6", icon = icon("poll"))
+      )
+    
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "page6",
+              fluidRow(
+                box(plotOutput("plot1", height = 250)),
+                
+                box(
+                  title = "Graphique",
+                  selectInput(inputId ="x",
+                              label = "choose X",
+                              choices = names(prem2)[-c(1,2)],
+                              selected = NULL
+                  ),
+                  selectInput(inputId ="y",
+                              label = "choose Y",
+                              choices = names(prem2)[-c(1,2)],
+                              selected = NULL
+                  )
+                )
+              )
+      ),
+      
+      tabItem(tabName = "page3",
+              fluidRow(
+                
+                column(3,
+                       textInput("IDpol", label="IDpol",value=NA),
+                       numericInput("DrivAge",label = "Driver Age", NA, min=18, max=99),
+                       selectInput("DrivGender",label = "Sexe", choices =list( "Non renseigné"="NA","Femme"="F", "Homme"="H")),
+                       numericInput("Year",label = "Year",value=2022 ,min=2000, max=2022),
+                       selectInput("JobCode",label = "Job",choices =list("Non renseigné"=NA,"Retailer","Other","Private employee","Public employee","Craftsman", "Retiree", "Other","Farmer"), selected="Non renseigné"),
+                       selectInput("Region", label="Region", choices=list("Non renseigné"=NA,"Auvergne-Rhône-Alpes","Bourgogne-Franche-Comté","Bretagne","Centre-Val de Loire","Corse","Grand Est","Hauts-de-France","Île-de-France","Normandie","Nouvelle-Aquitaine","Occitanie","Pays de la Loire","Provence-Alpes-Côte d'Azur"),selected=NA),
+                       selectInput("MaritalStatus",label = "MaritalStatus",choices =list("Non renseigné"=NA,"Married", "Single","Cohabiting", "Divorced"   ,"Widowed"  ),selected="Non renseigné")
+                ),
+                
+                column(3,
+                       sliderInput("BonusMalus", label="Bonus Malus", min=50, max=150, value=100),
+                       radioButtons("PayFreq", label="Paiement fréquence", choices = c("Annual","Half-yearly","Monthly","Quarterly","Non renseigné"=NA),selected=NA),
+                       numericInput("VehAge",label = "Vehicule Age", value=NA, min=0, max=99),
+                       radioButtons("VehClass", label="Vehicule Class", choices = c("Cheap", "Medium", "Expensive","Non renseigné"=NA),selected=NA),
+                       
+                       numericInput("VehPower", label="Vehicule Power",value=NA, min=2, max=16 ),
+                       radioButtons("VehGas", label="Gas", choices = c("Diesel","Regular","Non renseigné"=NA),selected=NA),
+                       
+                ),
+                column(3, 
+                       numericInput("PremWindscreen", label="Prime Windscreen", value=0, min=0),
+                       numericInput("PremDamAll", label="Prime DamAll", value=0, min=0),
+                       numericInput("PremFire", label="Prime incendie", value=0, min=0),
+                       numericInput("PremAcc1", label="Prime Acc1", value=0, min=0),
+                       numericInput("PremAcc2", label="Prime Acc2", value=0, min=0),
+                       numericInput("PremLegal", label="Prime Legal", value=0, min=0),
+                       numericInput("PremTPLM", label="Prime TPLM", value=0, min=0),
+                       numericInput("PremTPLV", label="Prime TPLV", value=0, min=0),
+                       numericInput("PremTheft", label="Prime vol", value=0, min=0),
+                       numericInput("PremServ", label="Prime serv", value=0, min=0),
+                       numericInput("PremTot", label="Prime totale", value=0, min=0),
+                       actionButton("update", "Update Table"),textOutput("request"))
+              )
+              
+      ),
+      tabItem(tabName = "page1",
+              fluidPage(DTOutput('tabassu'))),
+      
+      tabItem(tabName = "page4",
+              headerPanel("Ajouter un sinistre"),
+              sidebarPanel(
+                textInput("IDpol2", label="IDpol",value=NA),
+                selectInput("Guarantee",label = "Guarantee",choices =list("Windscreen" ,"TPL","Theft","Damage","Other","Fire" , "Non renseigné"=NA), selected="Non renseigné"),
+                numericInput("Payment",label = "Paiement", 0, min=0),
+                numericInput("IDclaim",label = "ID",value=0 ,min=0),
+                dateInput("OccurDate", label = "Date", value = "2022-01-01", min="2003-01-01", max="2022-01-31"),
+                actionButton("update2", "Update Table"),textOutput("request2")) ),
+      
+      tabItem(tabName = "page2",
+              fluidPage(DTOutput('tabsin'))),
+      
+      
+      tabItem(tabName = "page5",
+              fluidPage(
+                headerPanel("Etude univarié"), 
+                selectInput(inputId = "var",
+                           label = "Choose the Categorical Variable",
+                           #choices=names(prem)),
+                           choices = c("DrivAge", "VehAge", "BonusMalus", "DrivGender","VehClass","VehGas","VehPower","Region","MaritalStatus")),
+                mainPanel( plotOutput("bar") )
+                
+      )
+      ),
+      tabItem(tabName = "page9",
+              fluidRow(
+                column( width = 12,
+                       box( h3("Choix de l'année"),
+                           radioButtons("year", label="Année choisi", choices = c(2003,2004) )),
+                       
+                       box(  valueBoxOutput("ca", width = 14))
+                       )),
+              fluidRow(
+                valueBoxOutput("tot_sin"),
+                valueBoxOutput("mean_sin"),
+                valueBoxOutput("nb_sin")
+              ),
+              
+              fluidRow(
+                valueBoxOutput("nb_ass"),
+                
+                valueBoxOutput("sum_ass"),
+                valueBoxOutput("mean_ass")
+              ))
+      
+    )
+  )
+  ),
+  
+
+
+server <- function(input, output) {
+  set.seed(122)
+  
+  library(ggplot2)
+  output$plot1 <- renderPlot({
+    #data <- as.data.frame(prem2[, c(input$x, input$y)])
+    data <- prem2[, c(input$x, input$y)]
+    colnames(data) <- c("col1", "col2")
+    ggplot(data,aes(x=col1,y=col2)) +
+      geom_point(colour='red') +
+      labs(x = input$x, y = input$y)
+  }, height = 400, width = 600)
+  
+  values <- reactiveValues()
+  values$df<-as.data.frame(prem2)
+  newEntry <- observe({
+    if(input$update > 0) {
+      req(input$IDpol)
+      isolate(values$df[nrow(values$df) + 1,]<-list(input$IDpol, input$Year, input$DrivAge,input$DrivGender,input$MaritalStatus,input$BonusMalus,input$PayFreq,input$JobCode,input$VehAge,input$VehClass,input$VehPower,input$VehGas,input$Region,input$PremWindscreen,input$PremDamAll,input$PremFire,input$PremAcc1,input$PremAcc2,input$PremLegal,input$PremTPLM,input$PremTPLV,input$PremServ,input$PremTheft,input$PremTot))
+      data=values$df
+      saveData2(data)
+    }
+  })
+  output$request <- renderText({
+    if(input$update > 0){
+      req(input$IDpol, input$Year)
+      paste0("L'utilisateur n°", input$IDpol, " a été ajouté")}
+  })
+  output$tabassu <- DT::renderDataTable(
+    
+    DT::datatable(values$df, escape=FALSE, 
+                  options = list( autoWidth = TRUE,
+                    scrollX = TRUE
+                  )) )
+  
+  values$df2<-sin
+  
+  
+  newEntry <- observe({
+    if(input$update2 > 0) {
+      req(input$IDpol2)
+      isolate(values$df2[nrow(values$df2) + 1,]<-list(input$IDpol2, as.Date(input$OccurDate),input$Payment,input$IDclaim,input$Guarantee))
+      data=values$df2
+      saveData(data)    }
+  })
+  output$request2 <- renderText({
+    if(input$update2 > 0){
+      req(input$IDpol2)
+      paste0("Le sinistre n°", input$IDpol2, " a été ajouté")}
+  })
+  
+  output$tabsin = renderDT(values$df2, selection = 'none', editable = FALSE)
+  
+  
+  
+  output$bar <- renderPlot({
+    tab=as.data.frame(prem)
+    ggplot(tab,aes_string(input$var))+
+      geom_bar()+
+      theme_bw()
+  })
+  output$tot_sin <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=sum(tab$Sum_sin)
+    valueBox(
+      paste0(a), "Coût total des sinistres", icon = icon("euro"),
+      color = "green"
+    )
+  })
+  output$mean_sin <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    tab<-tab[tab$Sum_sin>0,]
+    a=as.integer(mean(tab$Sum_sin))
+    valueBox(
+      paste0(a), "Coût moyen des sinistres", icon = icon("euro"),
+      color = "green"
+    )
+  })
+  
+  output$nb_sin <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=sum(tab$Nbsinistre)
+    valueBox(
+      paste0(a), "Nombre de sinistres", icon = icon("fire"),
+      color = "red"
+    )
+  })
+  
+  output$nb_ass <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=nrow(tab)
+    valueBox(
+      paste0(a), "Nombre d'assurés", icon = icon("person"),
+      color = "purple"
+    )
+  })
+  output$sum_ass <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=nrow(tab)
+    valueBox(
+      paste0(a,"€"), "Somme total des primes", icon = icon("credit-card"),
+      color = "blue"
+    )
+  })
+  
+  output$mean_ass <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=as.integer(mean(tab$PremTot))
+    valueBox(
+      paste0(a, "€"), "Prix moyen de la prime totale", icon = icon("credit-card"),
+      color = "blue"
+    )
+  })
+  
+  output$ca <- renderValueBox({
+    tab<-table[table$Year==input$year,]
+    a=sum(tab$PremTot)-sum(tab$Sum_sin)
+    valueBox(
+      paste0(a), "Chiffre d'affaires annuel", icon = icon("euro"),
+      color = "yellow"
+    )})
+  
+  
+} 
+)
+
+```
+
+# Analyse univariée
+## Variables qualitatives : tableau de fréquences (absolues et relatives), diagramme bâton/secteurs
+
+**Var : "DrivGender"**
+```{r}
+# Pas de sens avec "IDpol" 
+tab1 = sort(table(prem$DrivGender))
+TabFreq=transform(tab1,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$DrivGender),main = "Proportion du genre", ylab = "Quantité Totale",xlab="Genres")
+#Autre représentation
+ggplot(prem, aes(x = DrivGender,fill=DrivGender)) +
+  geom_bar()
+# Beaucoup plus d'hommes que de femmes, "other" en minorité 
+table(table$DrivGender,table$VehClass)
+barplot(table(table$DrivGender,table$VehClass),legend.text = row.names(table(table$DrivGender,table$VehClass)))
+```
+
+**Var : "MaritalStatus"**
+```{r}
+tab2 = sort(table(prem$MaritalStatus))
+TabFreq=transform(tab2,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$MaritalStatus),main = "Proportion du Statuts marital", ylab = "Quantité Totale",xlab="Situation")
+table %>% 
+        drop_na(MaritalStatus) %>%
+        ggplot(aes(x = MaritalStatus,fill=MaritalStatus,na.rm = FALSE))+
+        geom_bar(na.rm = FALSE)
+ggplot(table, aes(x = MaritalStatus,fill=MaritalStatus,na.rm = FALSE)) +
+  geom_bar(na.rm = FALSE)
+
+```
+
+**Var : "PayFreq"**
+```{r}
+tab3 = sort(table(prem$PayFreq))
+TabFreq=transform(tab3,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$PayFreq),main = "Proportion moyen de paiement", ylab = "Somme Paiement",xlab="Moyen de paiement")
+ggplot(table, aes(x = PayFreq,fill=PayFreq,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+**Var : "JobCode"**
+```{r}
+table_jobcode <-table[table$JobCode != is.na(table$JobCode),]
+tab4 = sort(table(prem$JobCode))
+TabFreq=transform(tab4,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table_jobcode$JobCode),main = "Proportion du type de travail", ylab = "Quantité Totale",xlab="Type de travail")
+ggplot(table, aes(x = JobCode,fill=JobCode,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+fig.dim = c(90, 120)
+```
+
+**Var : "VehClass"**
+```{r}
+tab5 = sort(table(prem$VehClass))
+TabFreq=transform(tab5,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$VehClass),main = "Proportion du type de voiture", ylab = "Quantité Totale",xlab="Type de voiture")
+ggplot(table, aes(x = VehClass,fill=VehClass,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+**Var : "VehPower"** --> var quanti
+```{r}
+tab6 = sort(table(prem$VehPower))
+TabFreq=transform(tab6,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$VehPower),main = "Proportion du type de voiture en fonction de leurs puissances", ylab = "Quantité Totale",xlab="Différentes puissances")
+ggplot(table, aes(x = VehPower,fill=VehPower,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+**Var : "VehGas"**
+```{r}
+tab7 = sort(table(prem$VehGas))
+TabFreq=transform(tab7,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$VehGas),main = "Proportion du type de voiture en fonction de leur carburant", ylab = "Quantité Totale",xlab="Type de carburant")
+ggplot(table, aes(x = VehGas,fill=VehGas,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+**Var : "VehUsage"**
+```{r}
+tab8 = sort(table(prem$VehUsage))
+TabFreq=transform(tab8,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$VehUsage),main = "Proportion de l'utilisation des voitures", ylab = "Quantité Totale",xlab="Type d'utilisation")
+ggplot(table, aes(x = VehUsage,fill=VehUsage,na.rm = TRUE), size=10) +
+  geom_bar(na.rm = TRUE)
+fig.dim = c(8, 6)
+```
+ 
+**Var : "Garage"**
+```{r}
+tab9 = sort(table(prem$Garage))
+TabFreq=transform(tab9,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$Garage),main = "Proportion du type de stationnement des voitures", ylab = "Quantité Totale",xlab="Type de stationnement")
+ggplot(table, aes(x = Garage,fill=Garage,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+fig.dim = c(10, 6)
+```
+
+**Var : "Area"**
+```{r}
+tab10 = sort(table(prem$Area))
+TabFreq=transform(tab10,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$Area),main = "Proportion du type de zone", ylab = "Quantité Totale",xlab="Zones")
+ggplot(table, aes(x = Area,fill=Area,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+fig.dim = c(8, 6)
+```
+
+**Var : "Region"**
+```{r}
+tab11 = sort(table(prem$Region))
+TabFreq=transform(tab11,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(table$Region),main = "Proportion des Régions", ylab = "Quantité Totale",xlab="Régions")
+ggplot(table, aes(x = Region,fill=Region,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+fig.dim = c(80, 10)
+```
+
+**Var : "Garanties"**
+```{r}
+tab12 = sort(table(sev$Guarantee))
+TabFreq=transform(tab12,freqcum=cumsum(Freq),freqrelative=table(Freq))
+TabFreq
+# Diagramme en bâton
+plot(table(sev$Guarantee),main = "Proportion du type de garanties", ylab = "Quantité Totale",xlab="Type de garanties")
+ggplot(sev, aes(x = Guarantee,fill=Guarantee,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+**Var : "Marketing"**
+```{r}
+tab13 = sort(table(table$Marketing))
+TabFreq=transform(tab13,freqcum=cumsum(Freq),freqrelative=table(Freq))
+TabFreq
+plot(table(table$Marketing),main = "Proportion du marketing choisi", ylab = "Quantité Totale",xlab="Type de marketing")
+ggplot(table, aes(x = Marketing,fill=Marketing,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+```
+
+## Variables quantitatives : moyenne, écart-type, min/max, médiane, quartiles
+
+Boîtes à moustaches
+
+**Var : "Year"** : pas pertinent dans notre étude
+```{r}
+summary(table$Year)
+hist(table$Year, main = "Histogrammes des années", xlab="Années")
+boxplot(table$Year, main = "Boite à moustache des années")
+ 
+```
+
+**Var : "DrivAge"** 
+```{r}
+summary(table$DrivAge)
+hist(table$DrivAge, main = "Histogrammes des ages", xlab="Age", col = "orange")
+boxplot(table$DrivAge, main = "Boite à moustache des ages")
+p= ggplot(table, aes(x=DrivAge, y=length(table))) + 
+  geom_boxplot()
+p +coord_flip()
+ggplot(table, aes(x=DrivAge, y=length(table)), color=DrivAge) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=DrivAge, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="orange")+
+  theme_classic()
+
+abline(h = median(table$DrivAge, na.rm = TRUE), col = "navy", lty = 2)
+text(1.35, median(table$DrivAge, na.rm = TRUE) + 0.15, "Médiane", col = "navy")
+Q1 <- quantile(table$DrivAge, probs = 0.25, na.rm = TRUE)
+abline(h = Q1, col = "darkred")
+text(1.35, Q1 + 0.15, "Q1 : premier quartile", col = "darkred", lty = 2)
+Q3 <- quantile(table$DrivAge, probs = 0.75, na.rm = TRUE)
+abline(h = Q3, col = "darkred")
+text(1.35, Q3 + 0.15, "Q3 : troisième quartile", col = "darkred", lty = 2)
+arrows(x0 = 0.7, y0 = quantile(table$DrivAge, probs = 0.75, na.rm = TRUE), x1 = 0.7, y1 = quantile(table$DrivAge, probs = 0.25, na.rm = TRUE), length = 0.1, code = 3)
+text(0.7, Q1 + (Q3 - Q1) / 2 + 0.15, "h", pos = 2)
+mtext("L'écart inter-quartile h contient 50 % des individus", side = 1)
+abline(h = Q1 - 1.5 * (Q3 - Q1), col = "darkgreen")
+text(1.35, Q1 - 1.5 * (Q3 - Q1) + 0.15, "Q1 -1.5 h", col = "darkgreen", lty = 2)
+abline(h = Q3 + 1.5 * (Q3 - Q1), col = "darkgreen")
+text(1.35, Q3 + 1.5 * (Q3 - Q1) + 0.15, "Q3 +1.5 h", col = "darkgreen", lty = 2)
+
+
+```
+
+**Var : "BonusMalus"**
+```{r}
+summary(table$BonusMalus)
+hist(table$BonusMalus, main = "Histogrammes des Bonus-Malus", xlab="Bonus-Malus",col = "blue")
+boxplot(table$BonusMalus, main = "Boite à moustache des Bonus-Malus")
+p= ggplot(table, aes(x=BonusMalus, y=length(table))) + 
+  geom_boxplot(color="darkblue", fill="lightblue")
+p +coord_flip()+ labs(title="Boîte à moustache des Bonus Malus", x = "Bonus Malus")+
+  theme_classic()
+ggplot(table, aes(x=BonusMalus, y=length(table)), color=BonusMalus) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=BonusMalus, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="orange")+
+  theme_classic()
+Q1 <- quantile(table$BonusMalus, probs = 0.25, na.rm = TRUE)
+abline(h = Q1, col = "darkred")
+text(1.35, Q1 + 0.15, "Q1 : premier quartile", col = "darkred", lty = 2)
+Q3 <- quantile(table$BonusMalus, probs = 0.75, na.rm = TRUE)
+abline(h = Q3, col = "darkred")
+text(1.35, Q3 + 0.15, "Q3 : troisième quartile", col = "darkred", lty = 2)
+arrows(x0 = 0.7, y0 = quantile(table$BonusMalus, probs = 0.75, na.rm = TRUE), x1 = 0.7, y1 = quantile(table$BonusMalus, probs = 0.25, na.rm = TRUE), length = 0.1, code = 3)
+text(0.7, Q1 + (Q3 - Q1) / 2 + 0.15, "h", pos = 2)
+mtext("L'écart inter-quartile h contient 50 % des individus", side = 1)
+abline(h = Q1 - 1.5 * (Q3 - Q1), col = "darkgreen")
+text(1.35, Q1 - 1.5 * (Q3 - Q1) + 0.15, "Q1 -1.5 h", col = "darkgreen", lty = 2)
+abline(h = Q3 + 1.5 * (Q3 - Q1), col = "darkgreen")
+text(1.35, Q3 + 1.5 * (Q3 - Q1) + 0.15, "Q3 +1.5 h", col = "darkgreen", lty = 2)
+
+
+
+```
+
+**Var : "VehAge"**
+```{r}
+summary(table$VehAge)
+hist(table$VehAge, main = "Histogrammes de l'âge du véhicule", xlab="Age du véhicule",col = "red")
+boxplot(table$VehAge, main = "Boite à moustache de l'âge du véhicule")
+p= ggplot(table, aes(x=VehAge, y=length(table))) + 
+  geom_boxplot(color="darkblue", fill="lightblue")
+p +coord_flip()+
+labs(title="Boîte à moustache de l'âge du véhicule", x = "Age du véhicule")+
+  theme_classic()
+ggplot(table, aes(x=VehAge, y=length(table)), color=VehAge) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=VehAge, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="orange")+
+  theme_classic()
+```
+
+**Var : "OccurDate"**
+```{r}
+summary(table$OccurDate)
+hist(table$OccurDate, main = "Histogrammes de la date du sinistre", xlab="Date du sinistre",col = "blue") # pas pertinent à analyser : mettre date sous forme date pour analyser
+boxplot(table$OccurDate, main = "Boite à moustache de la date du sinistre")
+p= ggplot(table, aes(x=OccurDate, y=length(table))) + 
+  geom_boxplot()
+p +coord_flip()
+ggplot(table, aes(x=OccurDate, y=length(table)), color=OccurDate) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=OccurDate, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="orange")+
+  theme_classic()
+```
+
+**Var : "VehPower"**
+```{r}
+summary(table$VehPower)
+hist(table$VehPower, main = "Histogrammes de la puissance du véhicule", xlab="Puissance du véhicule",col = "blue")
+boxplot(table$VehPower, main = "Boite à moustache de la puissance du véhicule")
+p= ggplot(table, aes(x=VehPower, y=length(table))) + 
+  geom_boxplot(color="blue", fill="lightblue")
+p +coord_flip()+
+labs(title="Boîte à moustache de la puissance du véhicule", x = "Puissance du véhicule")+
+  theme_classic()
+ggplot(table, aes(x=VehPower, y=length(table)), color=VehPower) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=VehPower, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="blue")+
+  theme_classic()
+```
+
+**Var : "PremTot"** : pas pertinent
+```{r}
+str(table$PremTot)
+summary(table$PremTot)
+hist(table$PremTot, main = "Histogrammes de des primes totales payées", xlab="Prix de la prime commerciale",col = "blue") 
+boxplot(table$PremTot, main = "Boite à moustache de la date du sinistre")
+p= ggplot(table, aes(x=PremTot, y=length(table))) + 
+  geom_boxplot(color="darkblue", fill="lightblue")
+p +coord_flip()+labs(title="Boîte à moustache de la prime totale", x = "Prime totale")+ theme_classic()
+ggplot(table, aes(x=PremTot, y=length(table)), color=PremTot) + 
+  geom_boxplot(notch=TRUE)
+ggplot(table, aes(x=PremTot, y=length(table))) +
+  geom_boxplot(fill='#A4A4A4', color="orange")+
+  theme_classic()
+```
+
+PremTheft & PremFire R = 0.983894
+
+```{r}
+cor(table$PremTheft, table$PremFire)
+plot(table$PremTheft, table$PremFire)
+reg <- lm(PremFire ~ PremTheft, data = table)
+summary(reg)
+plot(table$PremTheft~table$PremFire, data = table, main ="Assurance vol en fonction de l'assurance feu", xlab="Assurance vol", ylab="Assurance feu", col = "blue", type = "p")
+```
+
+**Var : nb sinistres et sum sin
+```{r}
+summary(table$Nbsinistre)
+hist(table$Nbsinistre, main = "Histogrammes du nombre de sinistres", xlab="Nombre de sinistres", col = "orange")
+summary(sev$Payment)
+hist(sev$Payment, main = "Histogrammes des coût de sinistres", xlab="Cout du sinistre", col = "orange")
+
+```
+
+## Densité et répartition cumulée
+
+```{r}
+plot( density(table_2003$PremTot, na.rm = TRUE)) 
+
+```
+
+graphes 2 var quantitatives : exemple ass tout risques & ancienneté
+véhicule
+
+```{r}
+plot(table_2003$VehAge~table_2003$PremDamAll, 
+     main = "Assurés ayant une assurance tout risques en fonction de l'âge du véhicule", xlab="Assurance tout risques ", ylab = "Age véhicule" )
+```
+
+# Analyse bivariée
+matrice corrélation
+
+```{r}
+VQ = cor(var_quantitative)
+library(Hmisc)
+rcorr(as.matrix(var_quantitative[,1:16]))
+symnum(VQ, abbr.colnames=FALSE)
+library(corrplot)
+corrplot(VQ, method = 'color')
+```
+
+Nb sinistres et Age
+```{r}
+reg = lm(table$Nbsinistre ~ table$DrivAge)
+plot(table$Nbsinistre,table$DrivAge)
+plot(table$Nbsinistre,table$DrivAge,pch = 19, col = rgb(1, 0, 0, 0.1), main = "Nombre de sinistre en fonction de l'âge du conducteur", xlab="Nombre de sinistres", ylab = "Âge du conducteur")
+
+plot(table_2003$Nbsinistre,table_2003$DrivAge,pch = 19, col = rgb(1, 0, 0, 0.1), main = "Nombre de sinistre en fonction de l'âge du conducteur en 2003", xlab="Nombre de sinistres", ylab = "Âge du conducteur")
+plot(table_2004$Nbsinistre,table_2004$DrivAge,pch = 19, col = rgb(1, 0, 0, 0.1), main = "Nombre de sinistre en fonction de l'âge du conducteur en 2004", xlab="Nombre de sinistres", ylab = "Âge du conducteur")
+summary(table_2004)
+
+summary(reg)
+boxplot(table$DrivAge ~ table$Nbsinistre, main = "Boite à moustache du nombre de sinistre en fonction de l'âge du conducteur")
+cor.test(table$DrivAge,table$Nbsinistre,method = "pearson",exact=F) 
+cor.test(table$DrivAge,table$Nbsinistre,method = "kendall",exact=F)
+cor.test(table$DrivAge,table$Nbsinistre,method = "spearman",exact=F)
+```
+Nb de sinistres et age semblent être corrélés : on ne rejette pas H0
+Il semble avoir un lien âge x frequence 
+Mauvais test de Kendall & Spearman mais bon résultat à alpha = 5% pour Pearson
+Nb sinistres et VehAge
+```{r}
+reg = lm(table$Nbsinistre ~ table$VehAge)
+plot(table$Nbsinistre,table$VehAge)
+plot(table$Nbsinistre,table$VehAge,pch = 19, col = rgb(1, 0, 0, 0.1), main = "Nombre de sinistre en fonction de l'âge du véhicule", xlab="Nombre de sinistres", ylab = "Âge du véhicule")
+summary(reg)
+boxplot(table$VehAge ~ table$Nbsinistre)
+cor.test(table$VehAge,table$Nbsinistre,method = "pearson",exact=F) 
+cor.test(table$VehAge,table$Nbsinistre,method = "kendall",exact=F)
+cor.test(table$VehAge,table$Nbsinistre,method = "spearman",exact=F)
+```
+Test avec les autres variables et NbSinistre
+```{r}
+boxplot(table$Nbsinistre~ table$DrivGender)
+boxplot(table$Nbsinistre~ table$MaritalStatus)
+boxplot(table$Nbsinistre~ table$DrivGender)
+boxplot(table$Nbsinistre~ table$PayFreq)
+boxplot(table$Nbsinistre~ table$VehClass)
+boxplot(table$Nbsinistre~ table$VehPower)
+boxplot(table$Nbsinistre~ table$VehGas)
+boxplot(table$Nbsinistre~ table$JobCode)
+boxplot(table$Nbsinistre~ table$Area)
+boxplot(table$Nbsinistre~ table$Region)
+boxplot(table$Nbsinistre~ table$Marketing)
+```
+Somme sinistres et Age : pas ouf
+```{r}
+table13=table[table$Sum_sin>0,]
+nrow(table13)
+reg = lm(table13$Sum_sin ~ table13$DrivAge)
+plot(table13$DrivAge,table13$Sum_sin)
+plot(table13$DrivAge,table13$Sum_sin,pch = 19, col = rgb(1, 0, 0, 0.1))
+summary(reg)
+boxplot(table13$Sum_sin ~ table13$DrivAge)
+# cor.test(table13$DrivAge,table13$Sum_sin,method = "pearson",exact=F) 
+# cor.test(table13$DrivAge,table13$Sum_sin,method = "kendall",exact=F)
+# cor.test(table13$DrivAge,table13$Sum_sin,method = "spearman",exact=F)
+```
+Somme sinistres et VehAge : pas ouf
+```{r}
+
+reg = lm(table13$Sum_sin ~ table13$VehAge)
+plot(table13$Sum_sin,table13$VehAge)
+plot(table13$Sum_sin,table13$VehAge,pch = 19, col = rgb(1, 0, 0, 0.1), main ="Coût des sinistres en fonction de l'âge du véhicule", xlab = "Coût du sinistre", ylab="Âge du véhicule")
+summary(reg)
+boxplot(table13$Sum_sin ~ table13$VehAge)
+# cor.test(table13$VehAge,table13$Sum_sin,method = "pearson",exact=F) 
+# cor.test(table13$VehAge,table13$Sum_sin,method = "kendall",exact=F)
+# cor.test(table13$VehAge,table13$Sum_sin,method = "spearman",exact=F)
+
+reg = lm(table_2003$Sum_sin ~ table_2003$VehAge)
+plot(table_2003$Sum_sin,table_2003$VehAge)
+plot(table_2003$Sum_sin,table_2003$VehAge,pch = 19, col = rgb(1, 0, 0, 0.1))
+summary(reg)
+boxplot(table_2003$Sum_sin ~ table_2003$VehAge)
+# cor.test(table_2003$VehAge,table_2003$Sum_sin,method = "pearson",exact=F) 
+# cor.test(table_2003$VehAge,table_2003$Sum_sin,method = "kendall",exact=F)
+# cor.test(table_2003$VehAge,table_2003$Sum_sin,method = "spearman",exact=F)
+
+reg = lm(table_2004$Sum_sin ~ table_2004$VehAge)
+plot(table_2004$Sum_sin,table_2004$VehAge)
+plot(table_2004$Sum_sin,table_2004$VehAge,pch = 19, col = rgb(1, 0, 0, 0.1))
+summary(reg)
+boxplot(table_2004$Sum_sin ~ table_2004$VehAge)
+# cor.test(table_2004$VehAge,table_2004$Sum_sin,method = "pearson",exact=F) 
+# cor.test(table_2004$VehAge,table_2004$Sum_sin,method = "kendall",exact=F)
+# cor.test(table_2004$VehAge,table_2004$Sum_sin,method = "spearman",exact=F)
+```
+Somme sinistres et DrivAge : 
+```{r}
+reg = lm(table_2003$Sum_sin ~ table_2003$DrivAge)
+plot(table_2003$Sum_sin,table_2003$DrivAge)
+plot(table_2003$Sum_sin,table_2003$DrivAge,pch = 19, col = rgb(1, 0, 0, 0.1), main= "Somme des sinistres en fonction de l'âge du conducteur en 2003", xlab = "Somme des sinistres", ylab="Âge du conducteur")
+summary(reg)
+boxplot(table_2003$Sum_sin ~ table_2003$DrivAge)
+cor.test(table_2003$DrivAge,table_2003$Sum_sin,method = "pearson",exact=F) 
+cor.test(table_2003$DrivAge,table_2003$Sum_sin,method = "kendall",exact=F)
+cor.test(table_2003$DrivAge,table_2003$Sum_sin,method = "spearman",exact=F)
+
+reg = lm(table_2004$Sum_sin ~ table_2004$DrivAge)
+plot(table_2004$Sum_sin,table_2004$DrivAge)
+plot(table_2004$Sum_sin,table_2004$DrivAge,pch = 19, col = rgb(1, 0, 0, 0.1),main= "Somme des sinistres en fonction de l'âge du conducteur en 2004", xlab = "Somme des sinistres", ylab="Âge du conducteur")
+summary(reg)
+boxplot(table_2004$Sum_sin ~ table_2004$DrivAge)
+cor.test(table_2004$DrivAge,table_2004$Sum_sin,method = "pearson",exact=F) 
+cor.test(table_2004$DrivAge,table_2004$Sum_sin,method = "kendall",exact=F)
+cor.test(table_2004$DrivAge,table_2004$Sum_sin,method = "spearman",exact=F)
+```
+Test avec les autres variables et Somme sinistres 
+```{r}
+boxplot(table$Sum_sin~ table$DrivGender)
+boxplot(table$Sum_sin~ table$JobCode)
+boxplot(table$Sum_sin~ table$VehClass)
+boxplot(table$Sum_sin~ table$VehPower)
+boxplot(table$Sum_sin~ table$VehGas)
+boxplot(table$Sum_sin~ table$JobCode)
+boxplot(table$Sum_sin~ table$Area)
+boxplot(table$Sum_sin~ table$Region)
+boxplot(table$Sum_sin~ table$Marketing)
+boxplot(table$Sum_sin~ table$VehGas)
+boxplot(table$Sum_sin~ table$MaritalStatus)
+boxplot(table$Sum_sin~ table$PayFreq)
+```
+Véhicule chers et NbSinistre
+```{r}
+tabexpensive<-table[table$VehClass=="Expensive",]
+boxplot(tabexpensive$Nbsinistre ~tabexpensive$VehClass)
+t<-cbind(table(tabexpensive$VehClass,tabexpensive$Nbsinistre))
+barplot(t,main = "Expensive")
+
+tabmed<-table[table$VehClass=="Medium",]
+boxplot(tabmed$Nbsinistre ~tabmed$VehClass)
+t<-cbind(table(tabmed$VehClass,tabmed$Nbsinistre))
+barplot(t,main = "Medium")
+
+str(tabexpensive)
+tabcheap<-table[table$VehClass=="Cheap",]
+boxplot(tabcheap$Nbsinistre ~tabcheap$VehClass)
+t<-cbind(table(tabcheap$VehClass,tabcheap$Nbsinistre))
+barplot(t,main = "Cheap")
+```
+Véhicule chers et Sommes sinistres
+```{r}
+tabexpensive<-table[table$VehClass=="Expensive",]
+t<-cbind(table(tabexpensive$VehClass,tabexpensive$Sum_sin))
+plot(tabexpensive$VehClass,tabexpensive$Sum_sin,main = "Expensive")
+
+tabmed<-table[table$VehClass=="Medium",]
+t<-cbind(table(tabmed$VehClass,tabmed$Sum_sin))
+barplot(t,main = "Medium")
+
+tabcheap<-table[table$VehClass=="Cheap",]
+t<-cbind(table(tabcheap$VehClass,tabcheap$Sum_sin))
+barplot(t,main = "Cheap")
+```
+Marketing et nb sinistres
+```{r}
+tabM1<-table[table$Marketing=="M1",]
+t<-cbind(table(tabM1$Marketing,tabM1$Nbsinistre))
+barplot(t,main = "M1")
+
+tabM2<-table[table$Marketing=="M2",]
+t<-cbind(table(tabM2$Marketing,tabM2$Nbsinistre))
+barplot(t,main = "M2")
+
+tabM3<-table[table$Marketing=="M3",]
+t<-cbind(table(tabM3$Marketing,tabM3$Nbsinistre))
+barplot(t,main = "M3")
+
+```
+
+
+# Etude des différentes années
+
+```{r}
+sum(table_2003$Sum_sin)
+sum(table_2004$Sum_sin)
+sum(table_2003$Nbsinistre)
+sum(table_2004$Nbsinistre)
+
+tablea=table_2003[table_2003$Sum_sin>0,]
+mean(tablea$Sum_sin)
+
+tablea=table_2004[table_2004$Sum_sin>0,]
+mean(tablea$Sum_sin)
+
+mean(table_2003$Nbsinistre)
+mean(table_2004$Nbsinistre)
+sum(table_2003$PremTot)
+ca2003=sum(table_2003$PremTot)-sum(table_2003$Sum_sin);ca2003
+ca2004=sum(table_2004$PremTot)-sum(table_2004$Sum_sin);ca2004
+ca2004/ca2003
+(nrow(table_2003)-nrow(table_2004))/nrow(table_2003)
+(ca2003-ca2004)/ca2003
+```
+
+```{r}
+tableresilié=subset(table_2003, !(IDpol %in% table_2004$IDpol))
+tablenonresilié=subset(table_2003, (IDpol %in% table_2004$IDpol))
+summary(tableresilié)
+summary(tablenonresilié)
+tablenonresilié$Nbsinsitre
+tabres = sort(table(tablenonresilié$Nbsinistre))
+TabFreq=transform(tabres,freqcum=cumsum(Freq),freqrelative=prop.table(Freq))
+TabFreq
+ggplot(tablenonresilié,main = "Non assurés", aes(x = Nbsinistre,fill=Nbsinistre)) + geom_histogram(color="darkblue", fill="lightblue")
+  geom_bar() 
+ggplot(tableresilié, aes(x = Nbsinistre,fill=Nbsinistre)) + geom_density(alpha=.2, fill="#FF6666") + geom_histogram(color="darkblue", fill="lightblue")
+  geom_bar() 
+
+```
+
+```{r}
+
+ggplot(tableresilié, aes(x = DrivGender,fill=DrivGender)) +
+  geom_bar()
+ggplot(tableresilié, aes(x = DrivAge,fill=DrivAge)) +
+  geom_bar()
+ggplot(tableresilié, aes(x = Region,fill=Region,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+ggplot(tableresilié, aes(x = BonusMalus,fill=BonusMalus,na.rm = TRUE)) +
+  geom_bar(na.rm = TRUE)
+hist(tableresilié$BonusMalus, main = "Histogrammes des Bonus-Malus", xlab="Bonus-Malus",col = "blue")
+```
+
+##POUR 2003
+```{r}
+library(MASS)
+# tmp <- d[, c("age", "heures.tv")]
+# tmp <- tmp[complete.cases(tmp), ]
+dim(table_2003)
+dim(table_2004)
+dim(table_2003) - dim(table_2004)
+filled.contour(kde2d(table_2003$DrivAge, table_2003$PremTot), color = terrain.colors, main = "Âge de l'assuré en fonction de la prime payée en 2003")
+filled.contour(kde2d(table_2004$DrivAge, table_2004$PremTot), color = terrain.colors, main = "Âge de l'assuré en fonction de la prime payée en 2004")
+```
+
+
+########## Coeff corrélation
+
+PremTheft & PremFire R = 0.983894
+
+```{r}
+cor(table_2003$PremTheft, table_2003$PremFire)
+plot(table_2003$PremTheft, table_2003$PremFire)
+reg <- lm(PremFire ~ PremTheft, data = table_2003)
+summary(reg)
+plot(table_2003$PremTheft~table_2003$PremFire, data = table_2003, main ="Assurance vol en fonction de l'assurance feu", xlab="Assurance vol", ylab="Assurance feu", col = "blue", type = "p")
+plot(table_2004$PremTheft~table_2004$PremFire, data = table_2004, main ="Assurance vol en fonction de l'assurance feu", xlab="Assurance vol", ylab="Assurance feu", col = "blue", type = "p")
+```
+
+PremTheft & PremWindscreen R = 0.8831016 PremFire & PremDamAll R =
+0.7844261 VehAge & DrivAge R = -0.4404483 PremDalAll & VehAge R =
+-0.5971863
+
+```{r}
+cor(table_2003$PremDamAll, table_2003$VehAge)
+```
+
+## POUR 2004
+
+```{r}
+library(MASS)
+# tmp <- d[, c("age", "heures.tv")]
+# tmp <- tmp[complete.cases(tmp), ]
+filled.contour(kde2d(table_2004$DrivAge, table_2004$BonusMalus), color = terrain.colors)
+```
+
+######## Coeff corrélation
+
+PremTheft & PremFire R = 0.9845151 PremServ & DrivAge R = -0.5803676
+
+```{r}
+cor(table_2004$PremServ, table_2004$DrivAge, use = "complete.obs")
+```
+
+matrice corrélation
+
+```{r}
+VQ2 = cor(var_quantitative2)
+library(Hmisc)
+rcorr(as.matrix(var_quantitative2[,1:16]))
+symnum(VQ, abbr.colnames=FALSE)
+library(corrplot)
+corrplot(VQ2, method = 'color')
+```
+
+# ACP
+
+```{r}
+#Choix variables int:
+table_acp<-select_if(table, is.numeric)
+names(table_acp)
+#table_acp<- subset (table_acp, select = -c(IDpol,Year,Area,Mean_sin,LicenceNb))
+table_acp<- subset (table_acp, select = c(Nbsinistre,Sum_sin,DrivAge,BonusMalus,VehAge,VehPower))
+
+dim(table_acp)
+table_acp= table_acp[sample(1:nrow(table_acp)), ]
+taille<-nrow(table_acp)
+taillet<-taille*1/3
+tabl_acp <- table_acp[1:taillet,]
+
+
+#Calculer l’ACP sur les individus/variables
+res.pca <- PCA(tabl_acp, graph = FALSE) #Normalise automatique les donnée
+print(res.pca)
+#Visualisation des données
+#1. Valeur propre/Variance
+eig.val <- get_eigenvalue(res.pca)
+print(eig.val)
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+
+
+```
+
+Graphe variables:
+
+```{r}
+
+var <- get_pca_var(res.pca)
+print(var)
+# Coordonnées
+head(var$coord)
+# Cos2: qualité de répresentation
+head(var$cos2)
+# Contributions aux composantes principales
+head(var$contrib)
+# Coordonnées des variables
+head(var$coord, 4)
+
+#Visualisation:
+fviz_pca_var(res.pca, col.var = "black")
+
+# Cos2 total des variables sur Dim.1 et Dim.2
+fviz_cos2(res.pca, choice = "var", axes = 1:2)
+
+# Colorer en fonction du cos2: qualité de représentation
+fviz_pca_var(res.pca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Évite le chevauchement de texte
+             )
+# Changer la transparence en fonction du cos2
+fviz_pca_var(res.pca, alpha.var = "cos2")
+# Contributions des variables à PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+# Contributions des variables à PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+## Colorer en fonction de la contribution
+fviz_pca_var(res.pca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+```
+
+Graphique des individus
+
+```{r}
+ind <- get_pca_ind(res.pca)
+print(ind)
+# Coordonnées des individus
+head(ind$coord)
+# Qualité des individus
+head(ind$cos2)
+# Contributions des individus
+head(ind$contrib)
+
+#2 Graphique:
+fviz_pca_ind (res.pca)
+
+fviz_pca_ind (res.pca, col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Évite le chevauchement de texte
+             )
+#Contribution des individu au 2 dim
+fviz_contrib(res.pca, choice = "ind", axes = 1:2)
+#Qualité représentation
+fviz_cos2(res.pca, choice = "ind")
+```
+```{r}
+table[39041,]
+table[44870,]
+table[38527,]
+```
+
+#Prévsion prime pure
+## Prévision frequence
+
+```{r}
+freq_emp=mean(table$Nbsinistre); freq_emp
+prix_moy=mean(sev$Payment)
+hist(table$Nbsinistre, main = "Histogramme du nombre de sinistres", xlab="Nombre de sinistres", ylab="Fréquence", col = 'blue')
+var(table$Nbsinistre) #
+pp_emp=freq_emp*prix_moy ;pp_emp
+```
+
+```{r}
+nb_ass=nrow(table)
+p_th=dpois(0:5,freq_emp)*nb_ass
+p_th
+freq_est=mean(p_th)/nrow(table)
+barplot(prop.table(table(table$Nbsinistre)),col = "red")
+x=0:5
+barplot(dpois(x,freq_emp),col="green",add=T);
+library(vcd)
+gf = goodfit(table$Nbsinistre, type = "poisson", method = "MinChisq")
+summary(gf) # le test ne rejette pas l'hypothese H0 : loi poisson
+plot(gf)
+lambda=mean(table$Nbsinistre)
+proba = c(dpois(0:4, lambda), 1 - ppois(5, lambda)) ; proba
+
+```
+
+## Prévision prix moyen
+
+```{r}
+sev=sev[sev$Payment>0,]
+hist (sev$Payment)
+hist (log(sev$Payment), main = "Histogramme du logarithme du paiement des prestations", xlab= "Paiement prestations", ylab="Fréquence", col = 'blue')
+
+```
+
+```{r}
+mu = mean(log(sev$Payment))
+sig = sd(log(sev$Payment))
+
+plot(density(log(sev$Payment)))
+curve(dnorm(x,mu,sig), lwd = 3, col = "red", add = TRUE) # assez proche
+boxplot(log(sev$Payment))
+
+plot(ecdf(log(sev$Payment)), main = "f.d.r de la charge")
+curve(pnorm(x,mu,sig), add = TRUE,col="red") # tres satisfaisant
+
+plot(qnorm(ppoints(log(sev$Payment))), sort(log(sev$Payment)))
+curve(mu+sig*x, -6, 6, col = "red", add = TRUE) # toujours tres satisfaisant
+
+```
+
+##Calcul prime pur
+
+```{r}
+exp(mu+sig^2/2)
+pp_emp
+lambda * exp(mu+sig^2/2) 
+pp_m = freq_est * exp(mu+sig^2/2) ; pp_m
+pp_m/pp_emp # Un peu sup a l'emprique
+```
+
+```{r}
+m = mean(sev$Payment)
+s = sd(sev$Payment)
+n = length(sev$Payment)
+u = qnorm(1-0.05/2)
+b_inf = m - 1* u * s / sqrt(n)
+b_sup = m + 1* u * s / sqrt(n)
+pp_inf = lambda * b_inf ; pp_inf
+pp_sup = lambda * b_sup ; pp_sup
+m
+```
+
+```{r}
+hist(sev$Payment,breaks=100)
+abline(v=exp(mu+sig^2/2),col="red",lwd=3)
+```
+
+##Chargement de sécurité
+
+```{r}
+delta = exp(qnorm(0.80,mu,sig))*freq_est   - pp_m ; delta
+cs = delta/pp_m ; cs
+```
+
+
