@@ -161,7 +161,8 @@ prem<-imputed_data
 #on a un peu moins de donn?e manquante.
 prem$VehGas[prem$VehGas=="Gazole"]<-"Diesel"
 t<-freq(prem$VehGas)
-
+print("TEST")
+print("Test 1 réussi")
 ###VehGas
 #On va prendre le gas majoritaire du type de voiture pour remplacer les valeur manquante.
 #On visualise les gas en fonction de la classe de voiture.
